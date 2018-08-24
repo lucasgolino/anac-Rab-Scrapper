@@ -15,10 +15,10 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
  */
 
 const mapper = {
-	'Proprietário:': 'owner',
-	'CPF/CGC': 'owner_tax',
+	'Proprietário': 'owner',
+	'CPF/CGC_owner': 'owner_tax',
 	'Operador': 'op',
-	'CPF/CGC': 'op_tax',
+	'CPF/CGC_op': 'op_tax',
 	'Fabricante': 'fab',
 	'Ano de Fabricação': 'fabyear',
 	'Modelo': 'model',
@@ -49,6 +49,7 @@ const scrapper = async (txmtc) => {
 	const $ = cheerio.load(body);
 	const tbody = $('table.box');
 	const dataUpdate = {};
+	let taxFirst = false;
 
 	tbody.find('tr').each((i, tr) => {
 		const td = $(tr).find('td.fontDestaque2');
@@ -59,8 +60,16 @@ const scrapper = async (txmtc) => {
 			
 			if (span.length) {
 				const htmlRemove = $.html(span);
-				const spanText = span.text().replace(':', '');
-				const text = div.html().replace(htmlRemove, '').replace(/\s+\</g, '<').replace(/\>\s+/g, '>').replace(/\n/g, '');
+				let spanText = span.text().replace(':', '');
+				let text = div.html().replace(htmlRemove, '').replace(/\s+\</g, '<').replace(/\>\s+/g, '>').replace(/\n/g, '').trim();
+				console.log(spanText);
+
+				if (spanText == 'CPF/CGC' && !taxFirst) {
+					spanText = `${spanText}_owner`;
+					taxFirst = !taxFirst;
+				} else if (spanText == 'CPF/CGC') {
+					spanText = `${spanText}_op`;
+				}
 
 				const map = Object.keys(mapper).indexOf(spanText);
 				
@@ -72,6 +81,10 @@ const scrapper = async (txmtc) => {
 	});
 
 	console.log(dataUpdate);
+};
+
+const doMap = (prefix) => {
+	const letters = 'abcdefghijklmnopqrstuvwxyz';	
 };
 
 scrapper('ppakr');
