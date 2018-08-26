@@ -1,90 +1,83 @@
-const rp = require('request-promise');
-const cheerio = require('cheerio');
+const mongoose = require('mongoose');
+const Rab = require('./models/rab');
+const bf = require('./tools/bruteforce');
+const scrapper = require('./services/scrapper');
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-/*
- * URL: https://sistemas.anac.gov.br/aeronaves/cons_rab.asp
- * Params:
- *	enivar: ok
- *	radiobutton: p
- *	selectFabricante: null
- *	selectHabilitacao: null
- *	selectIcao: null
- *	selectModelo: null
- *	txmtc: ppsda
- */
 
-const mapper = {
-	'Proprietário': 'owner',
-	'CPF/CGC_owner': 'owner_tax',
-	'Operador': 'op',
-	'CPF/CGC_op': 'op_tax',
-	'Fabricante': 'fab',
-	'Ano de Fabricação': 'fabyear',
-	'Modelo': 'model',
-	'Número de Série': 'sn',
-	'Tipo ICAO': 'icao',
-	'Tipo de Habilitação para Pilotos': 'thp',
-	'Classe da Aeronave': 'classe',
-	'Peso Máximo de Decolagem': 'pmd',
-	'Número Máximo de Passageiros': 'ndp',
-	'Categoria de Regstro': 'cr',
-	'Tipo de voo autorizado': 'tva',
-	'Número dos Certificados (CM - CA)': 'cmca',
-	'Situação no RAB': 'srab',
-	'Data da Compra/Transferência': 'dct',
-	'Data de Validade do CA': 'dvc',
-	'Situação de Aeronavegabiidade': 'sda',
-	'Consulta realizada em': 'lastUpdate',
-}
-
-const scrapper = async (txmtc) => {
-	const options = {
-		method: 'GET',
-		uri: `https://sistemas.anac.gov.br/aeronaves/cons_rab_print.asp?nf=${txmtc.toUpperCase()}`,
-		encoding: 'latin1',
+const callScrapper = (db, rab, index, rabs, end) => {
+	const callNext = () => {
+		if (index < rabs.length) {
+			return callScrapper(db, rabs[index + 1], index + 1, rabs, end);
+		} else {
+			return end();
+		}
 	};
+
+	const data = scrapper(rab, (data) => {
+		if (data !== null) {
+			new Rab(data)
+				.save()
+				.then(() => {
+					console.log(`[DB]> save ${data.txmtc}`);
+					return callNext();
+				})
+				.catch(() => {
+					const { txmtc } = data;
+					delete data.txmtc;
 	
-	const body = await rp(options);
-	const $ = cheerio.load(body);
-	const tbody = $('table.box');
-	const dataUpdate = {};
-	let taxFirst = false;
-
-	tbody.find('tr').each((i, tr) => {
-		const td = $(tr).find('td.fontDestaque2');
-		const div = $(td).find('div[align="left"]');
-		
-		if (div.children().length) {
-			const span = $(div).find('span.tx_bold');
-			
-			if (span.length) {
-				const htmlRemove = $.html(span);
-				let spanText = span.text().replace(':', '');
-				let text = div.html().replace(htmlRemove, '').replace(/\s+\</g, '<').replace(/\>\s+/g, '>').replace(/\n/g, '').trim();
-				console.log(spanText);
-
-				if (spanText == 'CPF/CGC' && !taxFirst) {
-					spanText = `${spanText}_owner`;
-					taxFirst = !taxFirst;
-				} else if (spanText == 'CPF/CGC') {
-					spanText = `${spanText}_op`;
-				}
-
-				const map = Object.keys(mapper).indexOf(spanText);
-				
-				if (map !== -1) {
-					dataUpdate[mapper[spanText]] = text;
-				}
-			}
+					Rab.findOneAndUpdate({ txmtc }, data)
+						.then(() => {
+							console.log(`[DB]> update ${txmtc}`);
+							return callNext();
+						})
+						.catch(() => {
+							console.log(`[DB]> failed to update ${txmtc}`);
+							return callNext();
+						});
+				});
+		} else {
+			console.log(`[DB]> Empty: ${rab}`);
+			return callNext();
 		}
 	});
 
-	console.log(dataUpdate);
 };
 
-const doMap = (prefix) => {
-	const letters = 'abcdefghijklmnopqrstuvwxyz';	
+const doMap = (db) => {
+	const letters = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z'];
+	const posfix = [];
+	const rabs = [];
+
+	bf({
+		len: 3,
+		chars: letters,
+		step: (d) => {
+			if(d.length === 3) {
+				posfix.push(d);
+			}
+		},
+		end: () => {
+			console.log('[BF]> End to build all posfix');
+
+			['PP', 'PT', 'PR'].forEach((pre) => {
+				posfix.forEach((pos) => {
+					rabs.push(`${pre.toUpperCase()}${pos.toUpperCase()}`);
+				});
+			});
+
+			callScrapper(db, rabs[0], 0, rabs, () => {
+				console.log('[APP]> done...', process.exit());
+			});
+		}
+	});
 };
 
-scrapper('ppakr');
+const start = () => {
+	const db = mongoose.connect('mongodb://localhost/anacScrapper', { useNewUrlParser: true });
+	console.log('[DB]> Database is connected.');
+
+	doMap(db);
+};
+
+start();
